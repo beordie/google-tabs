@@ -25,6 +25,10 @@
 
 // All open tabs — populated by fetchOpenTabs()
 let openTabs = [];
+let searchQuery = '';
+const THEMES = ['cyberpunk', 'dark', 'light'];
+let currentThemeIndex = 0;
+let quickJumpTabs = [];
 
 /**
  * fetchOpenTabs()
@@ -40,13 +44,14 @@ async function fetchOpenTabs() {
 
     const tabs = await chrome.tabs.query({});
     openTabs = tabs.map(t => ({
-      id:       t.id,
-      url:      t.url,
-      title:    t.title,
-      windowId: t.windowId,
-      active:   t.active,
+      id:            t.id,
+      url:           t.url,
+      title:         t.title,
+      windowId:      t.windowId,
+      active:        t.active,
+      lastAccessed:  t.lastAccessed || Date.now(),
       // Flag Tab Out's own pages so we can detect duplicate new tabs
-      isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
+      isTabOut:      t.url === newtabUrl || t.url === 'chrome://newtab/',
     }));
   } catch {
     // chrome.tabs API unavailable (shouldn't happen in an extension page)
@@ -281,6 +286,88 @@ async function dismissSavedTab(id) {
     tab.dismissed = true;
     await chrome.storage.local.set({ deferred });
   }
+}
+
+/**
+ * getFavorites()
+ *
+ * Retrieves the user's favorite tabs from storage.
+ */
+async function getFavorites() {
+  const { favorites = {} } = await chrome.storage.local.get('favorites');
+  return favorites;
+}
+
+/**
+ * toggleFavorite(url, title)
+ *
+ * Adds or removes a tab from favorites.
+ */
+async function toggleFavorite(url, title) {
+  const { favorites = {} } = await chrome.storage.local.get('favorites');
+  
+  if (favorites[url]) {
+    // Remove from favorites
+    delete favorites[url];
+  } else {
+    // Add to favorites
+    let domain = '';
+    try { domain = new URL(url).hostname; } catch {}
+    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : '';
+    
+    favorites[url] = {
+      url,
+      title,
+      domain,
+      faviconUrl,
+      addedAt: new Date().toISOString()
+    };
+  }
+  
+  await chrome.storage.local.set({ favorites });
+  return favorites;
+}
+
+/**
+ * renderFavorites(favorites)
+ *
+ * Renders the favorites section.
+ */
+function renderFavorites(favorites) {
+  const favoritesSection = document.getElementById('favoritesSection');
+  const favoritesContainer = document.getElementById('favoritesContainer');
+  const favoritesCount = document.getElementById('favoritesCount');
+  
+  const favoriteList = Object.values(favorites);
+  
+  if (favoriteList.length === 0) {
+    favoritesSection.style.display = 'none';
+    return;
+  }
+  
+  favoritesSection.style.display = 'block';
+  favoritesCount.textContent = favoriteList.length;
+  
+  favoritesContainer.innerHTML = favoriteList.map(fav => {
+    const safeUrl = (fav.url || '').replace(/"/g, '&quot;');
+    const safeTitle = (fav.title || '').replace(/"/g, '&quot;');
+    const displayTitle = safeTitle || fav.domain || 'Untitled';
+    
+    return `
+      <div class="favorite-card" data-action="focus-tab" data-tab-url="${safeUrl}" title="${displayTitle}">
+        ${fav.faviconUrl ? `<img class="favorite-favicon" src="${fav.faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
+        <div class="favorite-info">
+          <div class="favorite-title">${displayTitle}</div>
+          ${fav.domain ? `<div class="favorite-domain">${fav.domain}</div>` : ''}
+        </div>
+        <div class="favorite-actions">
+          <button class="favorite-action-btn remove" data-action="remove-favorite" data-tab-url="${safeUrl}" title="Remove from favorites">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 
@@ -767,10 +854,14 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
     const safeTitle = label.replace(/"/g, '&quot;');
     let domain = '';
     try { domain = new URL(tab.url).hostname; } catch {}
-    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
+    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : '';
+    const highlightedLabel = searchQuery.trim() ? highlightSearchMatch(label, searchQuery) : label;
+    const activity = getTabActivity(tab.lastAccessed);
+    const activityHtml = `<div class="activity-indicator"><span class="activity-dot ${activity.level}" title="${activity.label}"></span></div>`;
     return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
+      ${activityHtml}
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
-      <span class="chip-text">${label}</span>${dupeTag}
+      <span class="chip-text">${highlightedLabel}</span>${dupeTag}
       <div class="chip-actions">
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
@@ -800,6 +891,36 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
  * Builds the HTML for one domain group card.
  * group = { domain: string, tabs: [{ url, title, id, windowId, active }] }
  */
+// Helper: Highlight search matches in text
+function highlightSearchMatch(text, query) {
+  if (!query || !text) return text;
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const index = lowerText.indexOf(lowerQuery);
+  if (index === -1) return text;
+  return text.substring(0, index) + 
+         '<span class="search-highlight">' + text.substring(index, index + lowerQuery.length) + '</span>' + 
+         text.substring(index + lowerQuery.length);
+}
+
+// Helper: Get tab activity level and label
+function getTabActivity(lastAccessed) {
+  const now = Date.now();
+  const hoursPassed = (now - lastAccessed) / (1000 * 60 * 60);
+  
+  if (hoursPassed < 1) {
+    return { level: 'fresh', label: '刚刚', color: '#00ff9f' };
+  } else if (hoursPassed < 6) {
+    return { level: 'active', label: '几小时前', color: '#00ffff' };
+  } else if (hoursPassed < 24) {
+    return { level: 'normal', label: '今天', color: '#ffcc00' };
+  } else if (hoursPassed < 72) {
+    return { level: 'stale', label: '几天前', color: '#ff6600' };
+  } else {
+    return { level: 'zombie', label: '僵尸', color: '#ff0040' };
+  }
+}
+
 function renderDomainCard(group) {
   const tabs      = group.tabs || [];
   const tabCount  = tabs.length;
@@ -848,11 +969,34 @@ function renderDomainCard(group) {
     const safeTitle = label.replace(/"/g, '&quot;');
     let domain = '';
     try { domain = new URL(tab.url).hostname; } catch {}
-    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
-    return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
+    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : '';
+    const highlightedLabel = searchQuery.trim() ? highlightSearchMatch(label, searchQuery) : label;
+    const activity = getTabActivity(tab.lastAccessed);
+    const activityHtml = `<div class="activity-indicator"><span class="activity-dot ${activity.level}" title="${activity.label}"></span></div>`;
+    
+    // Quick jump number indicator
+    let quickJumpNumberHtml = '';
+    if (window.__quickJumpIndexMap && window.__quickJumpIndexMap[tab.url]) {
+      const idx = window.__quickJumpIndexMap[tab.url];
+      quickJumpNumberHtml = `<span class="quick-jump-number">${idx}</span>`;
+    }
+    
+    // Check if tab is favorited
+    const isFavorited = window.__favorites && window.__favorites[safeUrl];
+    const favoriteSvg = isFavorited 
+      ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M10.788 3.21c.448-1.077 2.317-1.077 2.765 0l2.06 4.941 5.464.495c1.196.108 1.675 1.563.768 2.357l-4.05 3.508 1.07 5.218c.235 1.144-.992 2.063-2.038 1.483L12 18.896l-4.827 2.311c-1.046.501-2.273-.339-2.038-1.483l1.07-5.218-4.05-3.508c-.907-.794-.428-2.249.768-2.357l5.464-.495 2.06-4.941Z" clip-rule="evenodd" /></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>`;
+    const favoriteClass = isFavorited ? ' chip-favorited' : '';
+    
+    return `<div class="page-chip clickable${chipClass}${favoriteClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
+      ${quickJumpNumberHtml}
+      ${activityHtml}
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
-      <span class="chip-text">${label}</span>${dupeTag}
+      <span class="chip-text">${highlightedLabel}</span>${dupeTag}
       <div class="chip-actions">
+        <button class="chip-action chip-favorite" data-action="toggle-favorite" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="${isFavorited ? 'Remove from favorites' : 'Add to favorites'}" style="${isFavorited ? 'color: var(--accent-amber)' : ''}">
+          ${favoriteSvg}
+        </button>
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
         </button>
@@ -877,12 +1021,19 @@ function renderDomainCard(group) {
       </button>`;
   }
 
+  const domainName = isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain));
+  const highlightedDomainName = searchQuery.trim() ? highlightSearchMatch(domainName, searchQuery) : domainName;
   return `
-    <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}">
+    <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}" draggable="true">
+      <div class="mission-drag-handle" title="Drag to reorder">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 8h16M4 16h16" />
+        </svg>
+      </div>
       <div class="status-bar"></div>
       <div class="mission-content">
         <div class="mission-top">
-          <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
+          <span class="mission-name">${highlightedDomainName}</span>
           ${tabBadge}
           ${dupeBadge}
         </div>
@@ -966,11 +1117,11 @@ async function renderDeferredColumn() {
 function renderDeferredItem(item) {
   let domain = '';
   try { domain = new URL(item.url).hostname.replace(/^www\./, ''); } catch {}
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
   const ago = timeAgo(item.savedAt);
 
   return `
-    <div class="deferred-item" data-deferred-id="${item.id}">
+    <div class="deferred-item" data-deferred-id="${item.id}" data-deferred-url="${item.url}">
       <input type="checkbox" class="deferred-checkbox" data-action="check-deferred" data-deferred-id="${item.id}">
       <div class="deferred-info">
         <a href="${item.url}" target="_blank" rel="noopener" class="deferred-title" title="${(item.title || '').replace(/"/g, '&quot;')}">
@@ -1025,6 +1176,11 @@ async function renderStaticDashboard() {
   const dateEl     = document.getElementById('dateDisplay');
   if (greetingEl) greetingEl.textContent = getGreeting();
   if (dateEl)     dateEl.textContent     = getDateDisplay();
+
+  // --- Load favorites ---
+  const favorites = await getFavorites();
+  window.__favorites = favorites;
+  renderFavorites(favorites);
 
   // --- Fetch tabs ---
   await fetchOpenTabs();
@@ -1130,17 +1286,74 @@ async function renderStaticDashboard() {
     if (landingHostnames.has(domain)) return true;
     return landingSuffixes.some(s => domain.endsWith(s));
   }
-  domainGroups = Object.values(groupMap).sort((a, b) => {
-    const aIsLanding = a.domain === '__landing-pages__';
-    const bIsLanding = b.domain === '__landing-pages__';
-    if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
+  
+  // Load saved domain order from storage
+  let savedOrder = [];
+  try {
+    const { domainOrder = [] } = await chrome.storage.local.get('domainOrder');
+    savedOrder = domainOrder;
+  } catch {}
+  
+  // Apply saved order to domain groups
+  domainGroups = Object.values(groupMap);
+  
+  // Sort with saved order first, then default rules
+  if (savedOrder.length > 0) {
+    const orderMap = {};
+    savedOrder.forEach((domain, index) => {
+      orderMap[domain] = index;
+    });
+    
+    domainGroups.sort((a, b) => {
+      const aOrder = orderMap[a.domain] !== undefined ? orderMap[a.domain] : Infinity;
+      const bOrder = orderMap[b.domain] !== undefined ? orderMap[b.domain] : Infinity;
+      
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      
+      const aIsLanding = a.domain === '__landing-pages__';
+      const bIsLanding = b.domain === '__landing-pages__';
+      if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
+      
+      const aIsPriority = isLandingDomain(a.domain);
+      const bIsPriority = isLandingDomain(b.domain);
+      if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
+      
+      return b.tabs.length - a.tabs.length;
+    });
+  } else {
+    // Default sorting if no saved order
+    domainGroups.sort((a, b) => {
+      const aIsLanding = a.domain === '__landing-pages__';
+      const bIsLanding = b.domain === '__landing-pages__';
+      if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
 
-    const aIsPriority = isLandingDomain(a.domain);
-    const bIsPriority = isLandingDomain(b.domain);
-    if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
+      const aIsPriority = isLandingDomain(a.domain);
+      const bIsPriority = isLandingDomain(b.domain);
+      if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
 
-    return b.tabs.length - a.tabs.length;
-  });
+      return b.tabs.length - a.tabs.length;
+    });
+  }
+
+  // --- Apply search filter ---
+  let filteredGroups = domainGroups;
+  let filteredTabs = realTabs;
+  
+  if (searchQuery.trim()) {
+    const query = searchQuery.toLowerCase().trim();
+    filteredGroups = domainGroups.map(group => {
+      const filteredTabsInGroup = group.tabs.filter(tab => 
+        (tab.title && tab.title.toLowerCase().includes(query)) || 
+        (tab.url && tab.url.toLowerCase().includes(query))
+      );
+      return { ...group, tabs: filteredTabsInGroup };
+    }).filter(group => group.tabs.length > 0);
+    
+    filteredTabs = realTabs.filter(tab => 
+      (tab.title && tab.title.toLowerCase().includes(query)) || 
+      (tab.url && tab.url.toLowerCase().includes(query))
+    );
+  }
 
   // --- Render domain cards ---
   const openTabsSection      = document.getElementById('openTabsSection');
@@ -1148,18 +1361,88 @@ async function renderStaticDashboard() {
   const openTabsSectionCount = document.getElementById('openTabsSectionCount');
   const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
 
-  if (domainGroups.length > 0 && openTabsSection) {
-    if (openTabsSectionTitle) openTabsSectionTitle.textContent = 'Open tabs';
-    openTabsSectionCount.innerHTML = `${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
+  if (filteredGroups.length > 0 && openTabsSection) {
+    if (openTabsSectionTitle) {
+      openTabsSectionTitle.textContent = searchQuery.trim() ? `Search results (${filteredTabs.length})` : 'Open tabs';
+    }
+    openTabsSectionCount.innerHTML = searchQuery.trim() 
+      ? '' 
+      : `<button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
+    openTabsMissionsEl.innerHTML = filteredGroups.map(g => renderDomainCard(g)).join('');
     openTabsSection.style.display = 'block';
   } else if (openTabsSection) {
-    openTabsSection.style.display = 'none';
+    openTabsSection.style.display = 'block';
+    if (openTabsSectionTitle) openTabsSectionTitle.textContent = searchQuery.trim() ? 'No results' : 'Open tabs';
+    openTabsMissionsEl.innerHTML = searchQuery.trim() 
+      ? '<div style="color: var(--muted); padding: 40px 20px; text-align: center; font-size: 15px;">No tabs found for "' + searchQuery + '"</div>' 
+      : '';
+    openTabsSectionCount.innerHTML = '';
+  }
+
+  // --- Batch actions visibility ---
+  const batchActionsEl = document.getElementById('batchActions');
+  const activityLegendEl = document.getElementById('activityLegend');
+  if (batchActionsEl && activityLegendEl && !searchQuery.trim()) {
+    const now = Date.now();
+    const zombieTabs = realTabs.filter(tab => (now - tab.lastAccessed) > (1000 * 60 * 60 * 72));
+    const staleTabs = realTabs.filter(tab => (now - tab.lastAccessed) > (1000 * 60 * 60 * 24) && (now - tab.lastAccessed) <= (1000 * 60 * 60 * 72));
+    
+    const hasActivityIndicators = realTabs.length > 0;
+    const hasTabs = realTabs.length > 0;
+    
+    if (hasTabs) {
+      batchActionsEl.style.display = 'flex';
+      const zombieBtn = batchActionsEl.querySelector('[data-action="close-zombie-tabs"]');
+      const staleBtn = batchActionsEl.querySelector('[data-action="close-stale-tabs"]');
+      const resetBtn = batchActionsEl.querySelector('[data-action="reset-order"]');
+      
+      if (zombieBtn) {
+        const svgHtml = zombieBtn.querySelector('svg')?.outerHTML || '';
+        zombieBtn.innerHTML = `${svgHtml} Clear zombies (${zombieTabs.length})`;
+        zombieBtn.style.display = zombieTabs.length > 0 ? 'inline-flex' : 'none';
+      }
+      if (staleBtn) {
+        const svgHtml = staleBtn.querySelector('svg')?.outerHTML || '';
+        staleBtn.innerHTML = `${svgHtml} Clear stale (${staleTabs.length})`;
+        staleBtn.style.display = staleTabs.length > 0 ? 'inline-flex' : 'none';
+      }
+      if (resetBtn) {
+        resetBtn.style.display = 'inline-flex';
+      }
+    } else {
+      batchActionsEl.style.display = 'none';
+    }
+    
+    // Always show legend when there are tabs
+    activityLegendEl.style.display = hasActivityIndicators ? 'flex' : 'none';
+  } else if (batchActionsEl && activityLegendEl) {
+    batchActionsEl.style.display = 'none';
+    activityLegendEl.style.display = 'none';
   }
 
   // --- Footer stats ---
   const statTabs = document.getElementById('statTabs');
-  if (statTabs) statTabs.textContent = openTabs.length;
+  if (statTabs) statTabs.textContent = searchQuery.trim() ? filteredTabs.length : openTabs.length;
+  const statDomains = document.getElementById('statDomains');
+  if (statDomains) statDomains.textContent = searchQuery.trim() ? filteredGroups.length : domainGroups.length;
+  
+  // --- Collect quick jump tabs (for 1-9 key shortcuts) ---
+  quickJumpTabs = [];
+  const seenUrls = new Set();
+  const quickJumpIndexMap = {}; // url → index (1-9)
+  
+  for (const group of filteredGroups) {
+    for (const tab of group.tabs) {
+      if (!seenUrls.has(tab.url) && quickJumpTabs.length < 9) {
+        seenUrls.add(tab.url);
+        quickJumpTabs.push(tab);
+        quickJumpIndexMap[tab.url] = quickJumpTabs.length;
+      }
+    }
+  }
+  
+  // Store in window for renderDomainCard to access
+  window.__quickJumpIndexMap = quickJumpIndexMap;
 
   // --- Check for duplicate Tab Out tabs ---
   checkTabOutDupes();
@@ -1202,6 +1485,49 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // ---- Close zombie tabs (3+ days old) ----
+  if (action === 'close-zombie-tabs') {
+    const now = Date.now();
+    const zombieTabUrls = realTabs
+      .filter(tab => (now - tab.lastAccessed) > (1000 * 60 * 60 * 72))
+      .map(t => t.url);
+    
+    if (zombieTabUrls.length === 0) return;
+    
+    await closeTabsByUrls(zombieTabUrls);
+    playCloseSound();
+    
+    document.querySelectorAll('#openTabsMissions .mission-card').forEach(c => {
+      const chips = c.querySelectorAll('.page-chip');
+      let hasZombies = false;
+      chips.forEach(chip => {
+        const url = chip.dataset.tabUrl;
+        if (zombieTabUrls.includes(url)) {
+          hasZombies = true;
+          const rect = chip.getBoundingClientRect();
+          shootConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          chip.style.transition = 'opacity 0.2s, transform 0.2s';
+          chip.style.opacity = '0';
+          chip.style.transform = 'scale(0.8)';
+          setTimeout(() => chip.remove(), 200);
+        }
+      });
+      
+      if (hasZombies) {
+        setTimeout(() => {
+          const remainingChips = c.querySelectorAll('.page-chip[data-action="focus-tab"]');
+          if (remainingChips.length === 0) {
+            animateCardOut(c);
+          }
+        }, 250);
+      }
+    });
+    
+    await renderStaticDashboard();
+    showToast(`Closed ${zombieTabUrls.length} zombie tab${zombieTabUrls.length !== 1 ? 's' : ''}`);
+    return;
+  }
+
   const card = actionEl.closest('.mission-card');
 
   // ---- Expand overflow chips ("+N more") ----
@@ -1214,6 +1540,33 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // ---- Toggle favorite ----
+  if (action === 'toggle-favorite') {
+    const tabUrl = actionEl.dataset.tabUrl;
+    const tabTitle = actionEl.dataset.tabTitle;
+    if (tabUrl) {
+      const newFavorites = await toggleFavorite(tabUrl, tabTitle);
+      window.__favorites = newFavorites;
+      renderFavorites(newFavorites);
+      await renderStaticDashboard();
+      showToast(newFavorites[tabUrl] ? 'Added to favorites' : 'Removed from favorites');
+    }
+    return;
+  }
+  
+  // ---- Remove favorite ----
+  if (action === 'remove-favorite') {
+    const tabUrl = actionEl.dataset.tabUrl;
+    if (tabUrl) {
+      const newFavorites = await toggleFavorite(tabUrl, '');
+      window.__favorites = newFavorites;
+      renderFavorites(newFavorites);
+      await renderStaticDashboard();
+      showToast('Removed from favorites');
+    }
+    return;
+  }
+  
   // ---- Focus a specific tab ----
   if (action === 'focus-tab') {
     const tabUrl = actionEl.dataset.tabUrl;
@@ -1259,6 +1612,11 @@ document.addEventListener('click', async (e) => {
     // Update footer
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
+    const statDomains = document.getElementById('statDomains');
+    if (statDomains) {
+      const remainingCards = document.querySelectorAll('.mission-card:not(.closing)');
+      statDomains.textContent = remainingCards.length;
+    }
 
     showToast('Tab closed');
     return;
@@ -1373,6 +1731,8 @@ document.addEventListener('click', async (e) => {
 
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
+    const statDomains = document.getElementById('statDomains');
+    if (statDomains) statDomains.textContent = domainGroups.length;
     return;
   }
 
@@ -1409,6 +1769,16 @@ document.addEventListener('click', async (e) => {
     }
 
     showToast('Closed duplicates, kept one copy each');
+    
+    // Update footer
+    const statTabs = document.getElementById('statTabs');
+    if (statTabs) statTabs.textContent = openTabs.length;
+    const statDomains = document.getElementById('statDomains');
+    if (statDomains) {
+      const remainingCards = document.querySelectorAll('.mission-card:not(.closing)');
+      statDomains.textContent = remainingCards.length;
+    }
+    
     return;
   }
 
@@ -1427,6 +1797,12 @@ document.addEventListener('click', async (e) => {
       );
       animateCardOut(c);
     });
+    
+    // Update footer
+    const statTabsAll = document.getElementById('statTabs');
+    if (statTabsAll) statTabsAll.textContent = openTabs.length;
+    const statDomainsAll = document.getElementById('statDomains');
+    if (statDomainsAll) statDomainsAll.textContent = 0;
 
     showToast('All tabs closed. Fresh start.');
     return;
@@ -1477,6 +1853,212 @@ document.addEventListener('input', async (e) => {
 
 
 /* ----------------------------------------------------------------
+   TAB SEARCH — filter open tabs as user types
+   ---------------------------------------------------------------- */
+document.addEventListener('input', async (e) => {
+  if (e.target.id !== 'tabSearch') return;
+  searchQuery = e.target.value;
+  await renderStaticDashboard();
+});
+
+// Keyboard shortcut: Ctrl/Cmd + K to focus search
+document.addEventListener('keydown', (e) => {
+  // Ctrl/Cmd + K to focus search
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    const searchInput = document.getElementById('tabSearch');
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+    return;
+  }
+  
+  // Escape to clear search
+  if (e.key === 'Escape') {
+    const searchInput = document.getElementById('tabSearch');
+    if (searchInput && document.activeElement === searchInput) {
+      searchInput.value = '';
+      searchQuery = '';
+      renderStaticDashboard();
+    }
+    return;
+  }
+  
+  // Number keys 1-9 for quick jump (ignore if typing in input)
+  const activeElement = document.activeElement;
+  const isTyping = activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA';
+  
+  if (!isTyping && /^[1-9]$/.test(e.key)) {
+    const index = parseInt(e.key) - 1;
+    if (quickJumpTabs[index]) {
+      const tab = quickJumpTabs[index];
+      try {
+        chrome.tabs.update(tab.id, { active: true });
+        chrome.windows.update(tab.windowId, { focused: true });
+        showToast(`Jumped to tab ${e.key}`);
+      } catch (err) {
+        console.warn('[tab-out] Quick jump failed:', err);
+      }
+    }
+  }
+});
+
+/* ----------------------------------------------------------------
+   THEME TOGGLE — switch between cyberpunk/dark/light themes
+   ---------------------------------------------------------------- */
+async function loadTheme() {
+  try {
+    const { theme = 'cyberpunk' } = await chrome.storage.local.get('theme');
+    currentThemeIndex = THEMES.indexOf(theme);
+    if (currentThemeIndex === -1) currentThemeIndex = 0;
+    applyTheme();
+  } catch {
+    currentThemeIndex = 0;
+    applyTheme();
+  }
+}
+
+function applyTheme() {
+  const root = document.documentElement;
+  const theme = THEMES[currentThemeIndex];
+  
+  root.classList.remove('theme-dark', 'theme-light');
+  
+  if (theme === 'dark') {
+    root.classList.add('theme-dark');
+  } else if (theme === 'light') {
+    root.classList.add('theme-light');
+  }
+  
+  chrome.storage.local.set({ theme });
+}
+
+document.addEventListener('click', async (e) => {
+  const toggle = e.target.closest('#themeToggle');
+  if (!toggle) return;
+  
+  currentThemeIndex = (currentThemeIndex + 1) % THEMES.length;
+  applyTheme();
+  
+  const themeNames = {
+    cyberpunk: 'Cyberpunk',
+    dark: 'Dark',
+    light: 'Light'
+  };
+  showToast(`Theme: ${themeNames[THEMES[currentThemeIndex]]}`);
+});
+
+/* ----------------------------------------------------------------
+   DRAG AND DROP — Reorder domain cards
+   ---------------------------------------------------------------- */
+let draggedCard = null;
+let draggedDomainId = null;
+
+document.addEventListener('dragstart', (e) => {
+  const card = e.target.closest('.mission-card');
+  if (!card) return;
+  
+  draggedCard = card;
+  draggedDomainId = card.dataset.domainId;
+  card.classList.add('dragging');
+  
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', draggedDomainId);
+});
+
+document.addEventListener('dragend', (e) => {
+  if (draggedCard) {
+    draggedCard.classList.remove('dragging');
+  }
+  draggedCard = null;
+  draggedDomainId = null;
+  
+  // Remove drag-over class from all cards
+  document.querySelectorAll('.mission-card').forEach(card => {
+    card.classList.remove('drag-over');
+  });
+});
+
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  
+  const card = e.target.closest('.mission-card');
+  if (!card || card === draggedCard) return;
+  
+  // Remove drag-over class from all other cards
+  document.querySelectorAll('.mission-card').forEach(c => {
+    if (c !== card) c.classList.remove('drag-over');
+  });
+  
+  card.classList.add('drag-over');
+});
+
+document.addEventListener('dragleave', (e) => {
+  const card = e.target.closest('.mission-card');
+  if (card) {
+    card.classList.remove('drag-over');
+  }
+});
+
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  
+  const targetCard = e.target.closest('.mission-card');
+  if (!targetCard || !draggedDomainId || targetCard.dataset.domainId === draggedDomainId) return;
+  
+  const targetDomainId = targetCard.dataset.domainId;
+  
+  // Get current domain order
+  const currentOrder = [];
+  document.querySelectorAll('.mission-card.domain-card').forEach(card => {
+    currentOrder.push(card.dataset.domainId);
+  });
+  
+  // Reorder
+  const fromIndex = currentOrder.indexOf(draggedDomainId);
+  const toIndex = currentOrder.indexOf(targetDomainId);
+  
+  if (fromIndex === -1 || toIndex === -1) return;
+  
+  currentOrder.splice(fromIndex, 1);
+  currentOrder.splice(toIndex, 0, draggedDomainId);
+  
+  // Save to storage
+  try {
+    await chrome.storage.local.set({ domainOrder: currentOrder });
+    showToast('Order saved');
+  } catch (err) {
+    console.warn('[tab-out] Failed to save domain order:', err);
+  }
+  
+  // Re-render to show new order
+  await renderStaticDashboard();
+});
+
+/* ----------------------------------------------------------------
+   DOUBLE CLICK — Open saved tab as new tab
+   ---------------------------------------------------------------- */
+document.addEventListener('dblclick', async (e) => {
+  const deferredItem = e.target.closest('.deferred-item');
+  if (!deferredItem) return;
+  
+  const url = deferredItem.dataset.deferredUrl;
+  if (!url) return;
+  
+  e.preventDefault();
+  
+  try {
+    await chrome.tabs.create({ url: url, active: true });
+    showToast('Opened saved tab');
+  } catch (err) {
+    console.warn('[tab-out] Failed to open tab:', err);
+  }
+});
+
+/* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
+loadTheme();
 renderDashboard();

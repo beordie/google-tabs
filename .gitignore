@@ -6,3 +6,7 @@ docs/superpowers/
 
 # Personal config (landing page patterns, etc.) — never push to GitHub
 extension/config.local.js
+
+# Chrome extension packaging files
+extension.crx
+extension.pem

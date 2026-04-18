@@ -13,7 +13,7 @@ No server. No account. No external API calls. Just a Chrome extension.
 Send your coding agent (Claude Code, Codex, etc.) this repo and say **"install this"**:
 
 ```
-https://github.com/zarazhangrui/tab-out
+https://github.com/beordie/tab-out
 ```
 
 The agent will walk you through it. Takes about 1 minute.
@@ -32,6 +32,15 @@ The agent will walk you through it. Takes about 1 minute.
 - **Expandable groups** show the first 8 tabs with a clickable "+N more"
 - **100% local** your data never leaves your machine
 - **Pure Chrome extension** no server, no Node.js, no npm, no setup beyond loading the extension
+- **Tab Search** instantly find any tab with search highlighting
+- **Activity Indicator** color-coded tabs showing how recently they were used
+- **Theme Switcher** choose from Cyberpunk, Dark, or Light themes
+- **Keyboard Shortcuts** Ctrl/Cmd + K to search, 1-9 to jump to tabs
+- **Favorites** pin your favorite tabs for quick access
+- **Drag and Drop** reorder your tab groups
+- **Quick Links** easy access to GitHub and personal website in header
+- **Cyberpunk Mode** stunning neon aesthetics with glowing effects
+- **Cleanup Zombies** close inactive tabs in bulk
 
 ---
 
@@ -40,7 +49,7 @@ The agent will walk you through it. Takes about 1 minute.
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/zarazhangrui/tab-out.git
+git clone https://github.com/beordie/tab-out.git
 ```
 
 **2. Load the Chrome extension**
@@ -88,4 +97,4 @@ MIT
 
 ---
 
-Built by [Zara](https://x.com/zarazhangrui)
+Built by [beordie](https://github.com/beordie)
