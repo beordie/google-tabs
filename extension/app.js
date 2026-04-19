@@ -952,6 +952,16 @@ function renderDomainCard(group) {
     if (!seen.has(tab.url)) { seen.add(tab.url); uniqueTabs.push(tab); }
   }
 
+  // Get domain favicon for the header
+  let domainFaviconUrl = '';
+  if (!isLanding && uniqueTabs.length > 0) {
+    try {
+      const parsed = new URL(uniqueTabs[0].url);
+      const domain = parsed.hostname;
+      domainFaviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    } catch {}
+  }
+
   const visibleTabs = uniqueTabs.slice(0, 8);
   const extraCount  = uniqueTabs.length - visibleTabs.length;
 
@@ -991,7 +1001,6 @@ function renderDomainCard(group) {
     return `<div class="page-chip clickable${chipClass}${favoriteClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
       ${quickJumpNumberHtml}
       ${activityHtml}
-      ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${highlightedLabel}</span>${dupeTag}
       <div class="chip-actions">
         <button class="chip-action chip-favorite" data-action="toggle-favorite" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="${isFavorited ? 'Remove from favorites' : 'Add to favorites'}" style="${isFavorited ? 'color: var(--accent-amber)' : ''}">
@@ -1033,6 +1042,18 @@ function renderDomainCard(group) {
       <div class="status-bar"></div>
       <div class="mission-content">
         <div class="mission-top">
+          ${!isLanding ? `
+            <span class="domain-favicon-wrapper">
+              ${domainFaviconUrl ? `<img class="domain-favicon" src="${domainFaviconUrl}" alt="" onerror="this.nextElementSibling.style.display='inline-flex';this.style.display='none';">` : ''}
+              <span class="domain-favicon-default" style="display:${domainFaviconUrl ? 'none' : 'inline-flex'};">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="2" y1="12" x2="22" y2="12"></line>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+              </span>
+            </span>
+          ` : ''}
           <span class="mission-name">${highlightedDomainName}</span>
           ${tabBadge}
           ${dupeBadge}

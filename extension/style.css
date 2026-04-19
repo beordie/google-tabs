@@ -1118,9 +1118,36 @@ header {
 .mission-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+}
+
+.domain-favicon-wrapper {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.domain-favicon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.domain-favicon-default {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-light);
+  background: var(--bg-subtle);
+}
+
+.domain-favicon-default svg {
+  width: 14px;
+  height: 14px;
 }
 
 .mission-name {
