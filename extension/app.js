@@ -15,6 +15,8 @@
 
 'use strict';
 
+try { new Function('return import("config.local.js")')(); } catch(e) {}
+
 
 /* ----------------------------------------------------------------
    CHROME TABS — Direct API Access
@@ -1119,6 +1121,10 @@ async function renderDeferredColumn() {
       archiveCountEl.textContent = `(${archived.length})`;
       archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
       archiveEl.style.display = 'block';
+      const archiveBody = document.getElementById('archiveBody');
+      if (archiveBody) archiveBody.style.display = 'block';
+      const archiveToggle = document.getElementById('archiveToggle');
+      if (archiveToggle) archiveToggle.classList.add('open');
     } else {
       archiveEl.style.display = 'none';
     }
@@ -1842,6 +1848,17 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ---- Deferred column close button ----
+document.addEventListener('click', (e) => {
+  const closeBtn = e.target.closest('#deferredCloseBtn');
+  if (!closeBtn) return;
+
+  const deferredColumn = document.getElementById('deferredColumn');
+  if (deferredColumn) {
+    deferredColumn.style.display = 'none';
+  }
+});
+
 // ---- Archive search — filter archived items as user types ----
 document.addEventListener('input', async (e) => {
   if (e.target.id !== 'archiveSearch') return;
@@ -2081,5 +2098,39 @@ document.addEventListener('dblclick', async (e) => {
 /* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
-loadTheme();
-renderDashboard();
+loadTheme().then(() => {
+  renderDashboard();
+  initMascot();
+});
+
+function initMascot() {
+  if (typeof lottie === 'undefined') return;
+
+  const root = document.documentElement;
+  if (root.classList.contains('theme-dark') || root.classList.contains('theme-light')) return;
+
+  const container = document.getElementById('mascotContainer');
+  if (!container || container.dataset.loaded) return;
+  container.dataset.loaded = 'true';
+
+  fetch('mascot-dance.json')
+    .then(r => r.json())
+    .then(data => {
+      data.layers = data.layers.filter(layer => layer.ty !== 1);
+      if (data.assets) {
+        data.assets.forEach(asset => {
+          if (asset.layers) {
+            asset.layers = asset.layers.filter(layer => layer.ty !== 1);
+          }
+        });
+      }
+      lottie.loadAnimation({
+        container: container,
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        animationData: data
+      });
+    })
+    .catch(() => {});
+}

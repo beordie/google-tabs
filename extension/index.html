@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="style.css">
+  <script src="lottie.min.js"></script>
 </head>
 <body>
 <div class="container">
@@ -21,9 +22,7 @@
        ================================================================ -->
   <header>
     <div class="header-left">
-      <!-- "Good afternoon" — written by getGreeting() in app.js -->
       <h1 id="greeting"></h1>
-      <!-- "Friday, April 4, 2026" — written by getDateDisplay() in app.js -->
       <div class="date" id="dateDisplay"></div>
     </div>
     <div class="header-right">
@@ -55,6 +54,9 @@
         </svg>
         <input type="text" class="search-input" id="tabSearch" placeholder="Search tabs...">
       </div>
+    </div>
+    <div class="cyber-mascot" id="cyberMascot">
+      <div id="mascotContainer"></div>
     </div>
   </header>
 
@@ -147,6 +149,11 @@
         <h2>Saved for later</h2>
         <div class="section-line"></div>
         <div class="section-count" id="deferredCount"></div>
+        <button class="deferred-close-btn" id="deferredCloseBtn" title="Close sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
       <!-- Active checklist items — injected by renderDeferredList() in app.js -->
@@ -216,9 +223,6 @@
 
 <!-- Personal config (gitignored) — defines LOCAL_LANDING_PAGE_PATTERNS etc. -->
 <!-- If the file doesn't exist, that's fine — app.js uses sensible defaults. -->
-<script src="config.local.js" onerror="/* no personal config, that's fine */"></script>
-
-<!-- Main dashboard logic — loads last so the DOM is ready -->
 <script src="app.js"></script>
 </body>
 </html>
