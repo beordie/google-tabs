@@ -602,6 +602,67 @@ function getDateDisplay() {
   });
 }
 
+const DIGIT_SEGMENTS = {
+  0: 'abcdef', 1: 'bc', 2: 'abdeg', 3: 'abcdg',
+  4: 'bcfg', 5: 'acdfg', 6: 'acdefg', 7: 'abc',
+  8: 'abcdefg', 9: 'abcdfg',
+};
+
+let clockInterval = null;
+
+function initClock() {
+  const container = document.getElementById('clockDisplay');
+  if (!container || container.querySelector('.clock-segment-display')) return;
+
+  const display = document.createElement('div');
+  display.className = 'clock-segment-display';
+
+  const layout = ['d','d','c','d','d','c','d','d'];
+
+  layout.forEach(type => {
+    if (type === 'd') {
+      const digit = document.createElement('div');
+      digit.className = 'clock-digit';
+      ['a','b','c','d','e','f','g'].forEach(s => {
+        const seg = document.createElement('span');
+        seg.className = `clock-seg ${'adg'.includes(s) ? 'h' : 'v'} ${s}`;
+        seg.dataset.seg = s;
+        digit.appendChild(seg);
+      });
+      display.appendChild(digit);
+    } else {
+      const colon = document.createElement('div');
+      colon.className = 'clock-colon';
+      colon.innerHTML = '<span></span><span></span>';
+      display.appendChild(colon);
+    }
+  });
+
+  container.appendChild(display);
+}
+
+function updateClock() {
+  const container = document.getElementById('clockDisplay');
+  if (!container) return;
+
+  if (!container.querySelector('.clock-segment-display')) initClock();
+
+  const now = new Date();
+  const timeStr = [
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+
+  const digits = container.querySelectorAll('.clock-digit');
+  digits.forEach((digit, i) => {
+    const active = DIGIT_SEGMENTS[parseInt(timeStr[i])];
+    digit.querySelectorAll('.clock-seg').forEach(seg => {
+      seg.classList.toggle('on', active.includes(seg.dataset.seg));
+    });
+  });
+}
+
 
 /* ----------------------------------------------------------------
    DOMAIN & TITLE CLEANUP HELPERS
@@ -936,11 +997,6 @@ function renderDomainCard(group) {
   const hasDupes   = dupeUrls.length > 0;
   const totalExtras = dupeUrls.reduce((s, [, c]) => s + c - 1, 0);
 
-  const tabBadge = `<span class="open-tabs-badge">
-    ${ICONS.tabs}
-    ${tabCount} tab${tabCount !== 1 ? 's' : ''} open
-  </span>`;
-
   const dupeBadge = hasDupes
     ? `<span class="open-tabs-badge" style="color:var(--accent-amber);background:rgba(200,113,58,0.08);">
         ${totalExtras} duplicate${totalExtras !== 1 ? 's' : ''}
@@ -987,12 +1043,6 @@ function renderDomainCard(group) {
     const activityHtml = `<div class="activity-indicator"><span class="activity-dot ${activity.level}" title="${activity.label}"></span></div>`;
     
     // Quick jump number indicator
-    let quickJumpNumberHtml = '';
-    if (window.__quickJumpIndexMap && window.__quickJumpIndexMap[tab.url]) {
-      const idx = window.__quickJumpIndexMap[tab.url];
-      quickJumpNumberHtml = `<span class="quick-jump-number">${idx}</span>`;
-    }
-    
     // Check if tab is favorited
     const isFavorited = window.__favorites && window.__favorites[safeUrl];
     const favoriteSvg = isFavorited 
@@ -1001,7 +1051,6 @@ function renderDomainCard(group) {
     const favoriteClass = isFavorited ? ' chip-favorited' : '';
     
     return `<div class="page-chip clickable${chipClass}${favoriteClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
-      ${quickJumpNumberHtml}
       ${activityHtml}
       <span class="chip-text">${highlightedLabel}</span>${dupeTag}
       <div class="chip-actions">
@@ -1018,11 +1067,11 @@ function renderDomainCard(group) {
     </div>`;
   }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts) : '');
 
-  let actionsHtml = `
+  let actionsHtml = tabCount >= 2 ? `
     <button class="action-btn close-tabs" data-action="close-domain-tabs" data-domain-id="${stableId}">
       ${ICONS.close}
-      Close all ${tabCount} tab${tabCount !== 1 ? 's' : ''}
-    </button>`;
+      Close all
+    </button>` : '';
 
   if (hasDupes) {
     const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
@@ -1057,7 +1106,6 @@ function renderDomainCard(group) {
             </span>
           ` : ''}
           <span class="mission-name">${highlightedDomainName}</span>
-          ${tabBadge}
           ${dupeBadge}
         </div>
         <div class="mission-pages">${pageChips}</div>
@@ -1208,6 +1256,10 @@ async function renderStaticDashboard() {
   const dateEl     = document.getElementById('dateDisplay');
   if (greetingEl) greetingEl.textContent = getGreeting();
   if (dateEl)     dateEl.textContent     = getDateDisplay();
+
+  updateClock();
+  if (clockInterval) clearInterval(clockInterval);
+  clockInterval = setInterval(updateClock, 1000);
 
   // --- Load favorites ---
   const favorites = await getFavorites();
